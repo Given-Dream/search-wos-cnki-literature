@@ -1,0 +1,40 @@
+{
+  "records": [
+    {
+      "group": "GROUP_A",
+      "database": "WOS",
+      "title": "Example paper matching the first strategy group",
+      "year": 2025,
+      "authors": ["Example Author", "Second Author"],
+      "doi": "10.1234/example.wos.1",
+      "sourceTitle": "Example Journal",
+      "documentType": "Article",
+      "webOfScienceIndex": "Science Citation Index Expanded (SCI-EXPANDED)",
+      "citedCount": 8,
+      "relevanceScore": 0.96,
+      "relevanceEvidence": "Every required GROUP_A concept is central.",
+      "journalTier": 2,
+      "journalScore": 4.2,
+      "journalEvidence": "Illustrative only; replace with verified evidence."
+    },
+    {
+      "group": "GROUP_A",
+      "database": "CNKI",
+      "title": "符合第一检索组语义要求的示例记录",
+      "year": 2025,
+      "formalYear": 2024,
+      "authors": "示例作者; 第二作者",
+      "doi": "10.1234/example.cnki.1",
+      "sourceTitle": "示例期刊",
+      "documentType": "期刊",
+      "citation": "[1]示例作者.示例题名[J].示例期刊,2024,1(1):1-10. DOI:10.1234/example.cnki.1",
+      "citedCount": 5,
+      "downloadCount": 500,
+      "relevanceScore": 0.94,
+      "relevanceEvidence": "题名与摘要满足 GROUP_A 的全部概念。",
+      "journalBadges": ["北大核心", "CSCD"],
+      "journalScore": 2.1,
+      "journalEvidence": "仅为结构示例；应替换为经过核验的知网导航证据。"
+    }
+  ]
+}

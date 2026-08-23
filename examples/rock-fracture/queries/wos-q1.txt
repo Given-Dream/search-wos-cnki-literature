@@ -1,0 +1,10 @@
+TI=(
+  rock OR "rock mass*" OR "rock material*" OR "rock-like material*" OR geomaterial* OR granite* OR sandstone* OR limestone* OR marble* OR shale* OR coal OR basalt* OR quartzite* OR slate* OR siltstone* OR mudstone* OR dolomite* OR argillite* OR tuff* OR halite* OR "rock salt"
+)
+AND TI=(
+  fractur* OR crack* OR microcrack* OR failur* OR damage* OR ruptur* OR spall* OR splitt* OR breakage
+)
+AND TI=(
+  "digital image correlation" OR "digital image correlat*" OR "digital speckle correlation" OR "digital image speckle correlation" OR "2D DIC" OR "3D DIC" OR "stereo DIC" OR "stereoscopic digital image correlation"
+)
+

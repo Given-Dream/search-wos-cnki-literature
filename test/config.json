@@ -1,0 +1,27 @@
+{
+  "selection": {
+    "groups": ["TOPIC_A"],
+    "databases": ["WOS", "CNKI"],
+    "maxPerDatabaseGroup": 10,
+    "currentYear": 2026,
+    "recentYearSpan": 3,
+    "minimumRelevanceScore": 0.8,
+    "requireRelevanceEvidence": true,
+    "olderExceptionTopFraction": 0.1,
+    "requireDoi": true,
+    "requireJournalEvidence": true,
+    "wos": {
+      "requiredDocumentType": "Article",
+      "requiredIndex": "SCI-EXPANDED"
+    },
+    "cnki": {
+      "requiredDocumentType": "期刊",
+      "journalTierRules": [
+        {"tier": 1, "any": ["卓越期刊", "EI", "SCI"]},
+        {"tier": 2, "any": ["北大核心", "CSCD", "中文核心"]},
+        {"tier": 3, "any": ["WJCI", "科技核心", "中国科技核心期刊"]}
+      ],
+      "fallbackJournalTier": 9
+    }
+  }
+}

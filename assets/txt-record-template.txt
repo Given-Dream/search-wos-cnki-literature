@@ -1,0 +1,15 @@
+﻿[1]
+Title: {{title}}
+Year: {{formalYear}}
+Authors: {{authors}}
+DOI: {{doi}}
+Source: {{sourceTitle}}
+Database: {{database}}
+Journal Level: Tier {{journalTier}}
+Journal Evidence: {{journalEvidence}}
+Relevance Score: {{relevanceScore}}
+Cited By: {{citedCount}}
+Downloads: {{downloadCount}}
+Time Rule: {{timeRule}}
+Selection Reason: {{selectionReason}}
+---

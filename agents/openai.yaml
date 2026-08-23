@@ -1,0 +1,7 @@
+interface:
+  display_name: "WOS/CNKI 通用文献检索"
+  short_description: "按任意检索策略脚本化检索 WOS 与知网并筛选导出 TXT"
+  default_prompt: "使用 $search-wos-cnki-literature 执行提供的检索策略，分别检索 WOS 与知网并按组筛选导出 TXT。"
+
+policy:
+  allow_implicit_invocation: true
