@@ -1,5 +1,17 @@
 # Candidate and TXT data contract
 
+## Collection state
+
+`cnki_collect.mjs` writes a state sidecar independently of the candidate JSON. Valid terminal meanings are:
+
+- `complete`: requested candidate count was collected.
+- `partial`: some records were collected, but paging or row extraction stopped early; resolve or disclose it before screening.
+- `confirmed-empty`: an explicit zero count remained stable; the candidate JSON may contain an empty `records` array.
+- `transient-error` or `indeterminate-timeout`: collection failed; no empty candidate file is written.
+- `manual-verification`: a CAPTCHA container was rendered in the visible viewport and requires the user.
+
+Do not convert the last three failure states into a zero-result pool. Preserve `query`, `queryWasNormalized`, displayed count, warnings, and the state sidecar in the run audit.
+
 ## Candidate JSON
 
 `scripts/select_and_export.mjs` accepts JSON arrays or objects with a `records` array:
@@ -38,6 +50,7 @@ Rules:
 - Relevance and journal fields are screening annotations, not facts inferred from result order.
 - CNKI `journalBadges` may drive the configurable tier mapping when `journalTier` is absent.
 - Extra raw-source fields and URLs are allowed.
+- `status: partial` candidates are not a complete candidate pool even when their `records` array is non-empty.
 
 ## Dynamic groups
 

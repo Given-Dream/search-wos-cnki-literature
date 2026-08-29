@@ -4,6 +4,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  classifyCnkiSnapshot,
+  normalizeDatabaseQuery,
+  rectIntersectsViewport,
+} from '../scripts/lib/retrieval.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const skillRoot = path.resolve(testDir, '..');
@@ -11,11 +16,15 @@ const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wos-cnki-skill-te
 const inputPath = path.join(temporaryRoot, 'candidates.json');
 const outputDir = path.join(temporaryRoot, 'output');
 
-function run(script, args) {
-  const result = spawnSync(process.execPath, [path.join(skillRoot, 'scripts', script), ...args], {
+function runRaw(script, args) {
+  return spawnSync(process.execPath, [path.join(skillRoot, 'scripts', script), ...args], {
     cwd: skillRoot,
     encoding: 'utf8',
   });
+}
+
+function run(script, args) {
+  const result = runRaw(script, args);
   if (result.status !== 0) {
     throw new Error(`${script} failed\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`);
   }
@@ -23,6 +32,49 @@ function run(script, args) {
 }
 
 try {
+  const normalizedQuery = normalizeDatabaseQuery("TKA%=(\n  'multi word concept'\n  + 'synonym'\n)\nAND TI%=('method')", 'CNKI');
+  assert.ok(!/[\r\n]/.test(normalizedQuery), 'professional queries must be normalized to one line');
+  assert.ok(normalizedQuery.includes("'multi word concept'"), 'whitespace inside quoted phrases must be preserved');
+  assert.equal(
+    classifyCnkiSnapshot({ bodyText: '抱歉，暂无数据，请稍后重试。', rowCount: 0, captchaVisible: false }).kind,
+    'transient-error',
+    'CNKI retry pages must not be classified as zero results',
+  );
+  assert.equal(
+    classifyCnkiSnapshot({ bodyText: '拖动下方拼图完成验证', rowCount: 0, captchaVisible: true }).kind,
+    'manual-verification',
+    'a viewport-visible CAPTCHA must pause for the user',
+  );
+  assert.equal(
+    classifyCnkiSnapshot({ bodyText: '拖动下方拼图完成验证', rowCount: 0, captchaVisible: false }).kind,
+    'indeterminate',
+    'stale CAPTCHA text without a visible control must not pause the run',
+  );
+  assert.equal(
+    classifyCnkiSnapshot({ bodyText: '共找到 0 条结果', resultCount: 0, rowCount: 0, captchaVisible: false }).kind,
+    'confirmed-empty-candidate',
+    'only an explicit zero count may enter the stable-empty timer',
+  );
+  assert.equal(
+    classifyCnkiSnapshot({ bodyText: '共找到 70 条结果', resultCount: 70, rowCount: 20, captchaVisible: false }).kind,
+    'results',
+    'visible result rows must win over stale page text',
+  );
+  assert.ok(
+    !rectIntersectsViewport(
+      { left: 0, top: -1_000_167, right: 400, bottom: -999_867, width: 400, height: 300 },
+      { width: 1280, height: 720 },
+    ),
+    'offscreen stale CAPTCHA geometry must not count as visible',
+  );
+  assert.ok(
+    rectIntersectsViewport(
+      { left: 300, top: 150, right: 700, bottom: 450, width: 400, height: 300 },
+      { width: 1280, height: 720 },
+    ),
+    'viewport-intersecting CAPTCHA geometry must count as visible',
+  );
+
   const extractedDir = path.join(temporaryRoot, 'extracted');
   run('extract_strategy.mjs', [
     '--strategy', path.join(testDir, 'fixtures', 'strategy.md'),
@@ -33,6 +85,26 @@ try {
   assert.deepEqual(Object.keys(extractedMap.groups).sort(), ['GROUP_ALPHA', '主题B'].sort(), 'strategy groups must be topic-agnostic');
   assert.equal(extractedMap.groups.GROUP_ALPHA.WOS.length, 1, 'WOS query block must be extracted');
   assert.equal(extractedMap.groups.GROUP_ALPHA.CNKI.length, 1, 'CNKI query block must be extracted');
+
+  const mismatchedWithoutMap = runRaw('extract_strategy.mjs', [
+    '--strategy', path.join(testDir, 'fixtures', 'strategy-mismatched.md'),
+    '--output', path.join(temporaryRoot, 'unmapped'),
+  ]);
+  assert.notEqual(mismatchedWithoutMap.status, 0, 'unpaired cross-database labels must require an explicit semantic map');
+  assert.match(mismatchedWithoutMap.stderr, /group labels are not paired/i);
+
+  const mappedDir = path.join(temporaryRoot, 'mapped');
+  run('extract_strategy.mjs', [
+    '--strategy', path.join(testDir, 'fixtures', 'strategy-mismatched.md'),
+    '--group-map', path.join(testDir, 'fixtures', 'group-map.json'),
+    '--output', mappedDir,
+    '--config-template', path.join(testDir, 'config.json'),
+  ]);
+  const mapped = JSON.parse(await fs.readFile(path.join(mappedDir, 'queries.json'), 'utf8'));
+  assert.deepEqual(Object.keys(mapped.groups).sort(), ['METHOD_A', 'METHOD_B']);
+  assert.deepEqual(mapped.groups.METHOD_A.sourceGroups, { WOS: ['A'], CNKI: ['Q1'] });
+  const normalizedCnkiFile = await fs.readFile(path.join(mappedDir, 'queries', 'METHOD_A_CNKI_1.txt'), 'utf8');
+  assert.equal(normalizedCnkiFile.trim().split(/\r?\n/).length, 1, 'extracted CNKI professional query must be one line');
 
   const autoOutputDir = path.join(temporaryRoot, 'auto-output');
   run('select_and_export.mjs', [
@@ -51,11 +123,11 @@ try {
   const generatedRecentWos = Array.from({ length: 11 }, (_, index) => ({
     group: 'TOPIC_A',
     database: 'WOS',
-    title: `Recent DIC rock fracture article ${index + 1}`,
+    title: `Recent cross-domain method article ${index + 1}`,
     year: 2024 + (index % 3),
     authors: [`Author ${index + 1}`],
     doi: `10.5555/wos.recent.${index + 1}`,
-    sourceTitle: `Rock Journal ${1 + (index % 4)}`,
+    sourceTitle: `Test Journal ${1 + (index % 4)}`,
     documentType: 'Article',
     webOfScienceIndex: 'Science Citation Index Expanded (SCI-EXPANDED)',
     citedCount: 100 - index,
@@ -95,7 +167,7 @@ try {
   const wosBuffer = await fs.readFile(path.join(outputDir, 'TOPIC_A_WOS.txt'));
   assert.deepEqual([...wosBuffer.subarray(0, 3)], [0xEF, 0xBB, 0xBF], 'TXT must include UTF-8 BOM');
 
-  console.log('PASS: generic strategy extraction, auto groups, selection, year exception, publication gates, independent quotas, GB/T year, and BOM');
+  console.log('PASS: query state diagnosis, viewport CAPTCHA detection, semantic group mapping, generic extraction, selection, year exception, publication gates, independent quotas, GB/T year, and BOM');
 } finally {
   const resolvedTemporaryRoot = path.resolve(temporaryRoot);
   if (!resolvedTemporaryRoot.startsWith(path.resolve(os.tmpdir()))) {

@@ -4,6 +4,8 @@
 
 Select independently for every `(group, database)` pair defined by the strategy. Each WOS pool and its corresponding CNKI pool may independently contain up to the configured maximum; never impose a fixed cross-database split. The same paper may appear in different semantic groups, but DOI duplicates within one output file are forbidden.
 
+The maximum is a ceiling, not a target. A sparse pool may produce fewer records or an empty TXT. Never import adjacent papers from another group or database to fill it.
+
 ## Relevance gate
 
 Journal prestige cannot rescue an off-topic record. Score relevance against the semantic definition of the current group, not against a built-in subject.
@@ -47,7 +49,9 @@ After relevance, identifier, publication type, and time qualification, rank exce
 5. higher citations, then downloads;
 6. normalized DOI as a stable tie-breaker.
 
-Acceptable evidence includes verified JCR quartile/year, documented field-specific WOS journal priority, and official CNKI navigation badges or metrics. SCI-EXPANDED proves index coverage, not a JCR quartile. Report local CNKI badge-to-tier mappings as configurable policy, not universal truth.
+Acceptable evidence includes verified JCR quartile/year, documented field-specific WOS journal priority, and official CNKI navigation badges or metrics. SCI-EXPANDED proves index coverage, not a JCR quartile. When JCR is unavailable, identify a configured field-priority tier as local screening policy or leave the tier unavailable; never label it Q1–Q4. Report local CNKI badge-to-tier mappings as configurable policy, not universal truth.
+
+Verify CNKI journal navigation evidence only for the topic/year/type/DOI shortlist. Store the observed badge or metric, source URL, and check date; do not infer quality from the search-result order.
 
 Keep `journalEvidence` non-empty. Report inaccessible evidence rather than fabricating it.
 

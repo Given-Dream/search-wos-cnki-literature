@@ -1,0 +1,18 @@
+{
+  "canonicalGroups": {
+    "GROUP_A": {
+      "meaning": "Describe the semantic intersection shared by both databases",
+      "aliases": {
+        "WOS": ["A"],
+        "CNKI": ["Q1"]
+      }
+    },
+    "GROUP_B": {
+      "meaning": "Describe the second shared semantic intersection",
+      "aliases": {
+        "WOS": ["B"],
+        "CNKI": ["Q2"]
+      }
+    }
+  }
+}

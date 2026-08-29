@@ -1,13 +1,22 @@
 {
   "sourceStrategy": "path/to/search-strategy.md",
+  "groupMap": "path/to/group-map.json",
   "groups": {
     "GROUP_A": {
       "meaning": "Describe the required semantic intersection",
+      "sourceGroups": {
+        "WOS": ["A"],
+        "CNKI": ["Q1"]
+      },
       "WOS": ["run/queries/GROUP_A_WOS_1.txt"],
       "CNKI": ["run/queries/GROUP_A_CNKI_1.txt"]
     },
     "GROUP_B": {
       "meaning": "Describe another independent literature pool",
+      "sourceGroups": {
+        "WOS": ["B"],
+        "CNKI": ["Q2"]
+      },
       "WOS": ["run/queries/GROUP_B_WOS_1.txt"],
       "CNKI": ["run/queries/GROUP_B_CNKI_1.txt"]
     }

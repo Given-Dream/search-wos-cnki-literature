@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs, requireArgs } from './lib/cli.mjs';
+import { canonicalGroup, findUnpairedGroups, parseGroupMap } from './lib/grouping.mjs';
+import { normalizeDatabaseQuery } from './lib/retrieval.mjs';
 import { isValidGroupId, safeFileComponent } from './lib/screening.mjs';
 
 function detectDatabase(text) {
@@ -78,7 +80,7 @@ function parseStrategy(markdown) {
   return { blocks, meanings };
 }
 
-const usage = 'Usage: node scripts/extract_strategy.mjs --strategy <strategy.md> --output <run-dir> [--config-template <default.json>]';
+const usage = 'Usage: node scripts/extract_strategy.mjs --strategy <strategy.md> --output <run-dir> [--group-map <json>] [--allow-unpaired-groups] [--config-template <default.json>]';
 const args = parseArgs(process.argv.slice(2));
 requireArgs(args, ['strategy', 'output'], usage);
 const strategyPath = path.resolve(String(args.strategy));
@@ -90,17 +92,48 @@ if (!blocks.length) {
   throw new Error('No query blocks were extracted. Use WOS/CNKI headings, group headings, and fenced query blocks, or normalize the strategy manually.');
 }
 
+let groupMap = null;
+let groupMapPath = '';
+if (args['group-map']) {
+  groupMapPath = path.resolve(String(args['group-map']));
+  groupMap = parseGroupMap(JSON.parse(await fs.readFile(groupMapPath, 'utf8')));
+}
+const mappedBlocks = blocks.map((block) => ({
+  ...block,
+  sourceGroup: block.group,
+  group: canonicalGroup(block.group, block.database, groupMap),
+  query: normalizeDatabaseQuery(block.query, block.database),
+}));
+const unpairedGroups = findUnpairedGroups(mappedBlocks);
+if (unpairedGroups.length && args['allow-unpaired-groups'] !== true) {
+  const detail = unpairedGroups.map((item) => `${item.group} (${item.databases.join('+')})`).join(', ');
+  throw new Error(
+    `WOS/CNKI group labels are not paired after normalization: ${detail}. `
+    + 'Create an explicit semantic alias map with assets/group-map-template.json and pass --group-map. '
+    + 'Do not pair groups merely by position. Use --allow-unpaired-groups only when one-database groups are intentional.',
+  );
+}
+
 await fs.mkdir(queryDir, { recursive: true });
-const map = { sourceStrategy: strategyPath, groups: {} };
+const map = {
+  sourceStrategy: strategyPath,
+  groupMap: groupMapPath || null,
+  queryNormalization: 'whitespace-only outside quoted phrases',
+  groups: {},
+};
 const counters = new Map();
-for (const block of blocks) {
+for (const block of mappedBlocks) {
   const group = safeFileComponent(block.group);
   const key = `${group}\u0000${block.database}`;
   const index = (counters.get(key) ?? 0) + 1;
   counters.set(key, index);
   const filename = `${group}_${block.database}_${index}.txt`;
   await fs.writeFile(path.join(queryDir, filename), `${block.query}\n`, 'utf8');
-  map.groups[group] ??= { meaning: meanings.get(group) ?? '', WOS: [], CNKI: [] };
+  const mappedMeaning = groupMap?.meanings.get(group) || meanings.get(block.sourceGroup) || '';
+  map.groups[group] ??= { meaning: mappedMeaning, sourceGroups: { WOS: [], CNKI: [] }, WOS: [], CNKI: [] };
+  if (!map.groups[group].sourceGroups[block.database].includes(block.sourceGroup)) {
+    map.groups[group].sourceGroups[block.database].push(block.sourceGroup);
+  }
   map.groups[group][block.database].push(`queries/${filename}`);
 }
 
@@ -118,6 +151,8 @@ console.log(JSON.stringify({
   outputDir,
   groups,
   queryBlocks: blocks.length,
+  groupMap: groupMapPath || null,
+  unpairedGroups,
   pairs: Object.fromEntries(groups.map((group) => [group, {
     WOS: map.groups[group].WOS.length,
     CNKI: map.groups[group].CNKI.length,

@@ -22,6 +22,14 @@ Represent the run as:
 
 Multiple query files for one pair are alternatives whose candidates must be merged and deduplicated; they are not implicitly joined with `AND`.
 
+### Align labels across databases
+
+WOS and CNKI sections may label parallel semantic groups differently, for example `A/B` versus `Q1/Q2`. Compare each heading's stated meaning and required concept intersection. Record confirmed aliases in the schema shown by `assets/group-map-template.json`, then pass it to `extract_strategy.mjs --group-map ...`.
+
+- Map by semantic meaning, never by ordinal position alone.
+- Keep one canonical ID for filenames and screening pools while preserving source labels in `queries.json`.
+- If a group intentionally exists in only one database, pass `--allow-unpaired-groups` and document why. Otherwise an unpaired label is an extraction error, not a new literature group.
+
 ## Preserve logic
 
 For each group, identify required semantic blocks before editing. Record the logical expression independently of database syntax, for example `A ∩ B`, `A ∩ B ∩ C`, or `(A1 ∪ A2) ∩ D`.
@@ -33,6 +41,14 @@ For each group, identify required semantic blocks before editing. Record the log
 
 ## Repair zero results
 
+First distinguish a confirmed empty result from a failed or unfinished page state:
+
+- CNKI `抱歉，暂无数据，请稍后重试`, a loading timeout, a partial page, or an unreadable count is a collection failure. Do not adjust the query from that observation and do not write a zero-result claim.
+- A stale CAPTCHA string or an offscreen/hidden CAPTCHA container is not an active challenge. Pause only when the challenge container is rendered inside the visible viewport.
+- A stable explicit zero count is a query outcome and may enter the counted-block diagnostic below.
+
+Normalize multiline WOS/CNKI query whitespace to one line without changing quoted phrases or Boolean structure. This removes interface formatting ambiguity but is not a semantic query adjustment.
+
 Use a counted-block diagnostic:
 
 1. Verify field tags, quotes, parentheses, wildcards, operators, interface mode, and character limits.
@@ -43,6 +59,8 @@ Use a counted-block diagnostic:
 6. Broaden the collapsing block from title to topic/subject before removing a required concept.
 7. Split an overlong CNKI professional query into equivalent alternatives, then merge candidates.
 8. If the group remains genuinely sparse, retain the smaller relevant set; do not fill the quota with adjacent papers.
+
+For CNKI, test individual blocks and pairwise intersections before changing fields. When a broad `TKA%=` pool is noisy, move only the most discriminative block to `TI%=` while retaining the contextual blocks and required concepts.
 
 ## Reduce noise
 

@@ -1,0 +1,18 @@
+{
+  "canonicalGroups": {
+    "METHOD_A": {
+      "meaning": "first concept and shared method",
+      "aliases": {
+        "WOS": ["A"],
+        "CNKI": ["Q1"]
+      }
+    },
+    "METHOD_B": {
+      "meaning": "second concept and shared method",
+      "aliases": {
+        "WOS": ["B"],
+        "CNKI": ["Q2"]
+      }
+    }
+  }
+}
