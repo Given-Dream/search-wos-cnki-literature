@@ -7,6 +7,8 @@
     "startUrl": "https://webofscience.clarivate.cn/wos/woscc/advanced-search"
   },
   "selection": {
+    "requiresExplicitDatabaseConfirmation": true,
+    "databaseCatalog": "config/database-catalog.json",
     "groups": "auto",
     "databases": ["WOS", "CNKI"],
     "maxPerDatabaseGroup": 10,

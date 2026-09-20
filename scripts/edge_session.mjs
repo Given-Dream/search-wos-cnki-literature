@@ -2,51 +2,158 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from './lib/cli.mjs';
 import { loadChromium } from './lib/playwright.mjs';
+import { normalizeLoopbackCdpUrl, validateBrowserTarget } from './lib/browser-session.mjs';
+
+function parseBoolean(value, fallback = false) {
+  if (value === undefined) return fallback;
+  if (value === true) return true;
+  if (/^(?:1|true|yes|on|是)$/iu.test(String(value))) return true;
+  if (/^(?:0|false|no|off|否)$/iu.test(String(value))) return false;
+  throw new Error(`Invalid boolean value: ${value}`);
+}
 
 const args = parseArgs(process.argv.slice(2));
 const edgePath = String(args['edge-path'] ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe');
 const profileDir = path.resolve(String(args['profile-dir'] ?? '.edge-wos-cnki-profile'));
 const port = Number(args.port ?? 9333);
-const startUrl = String(args['start-url'] ?? 'https://webofscience.clarivate.cn/wos/woscc/advanced-search');
+const startUrl = String(args['start-url'] ?? 'about:blank');
+const planPath = args.plan ? path.resolve(String(args.plan)) : '';
+const connectOverCdp = args['connect-over-cdp']
+  ? normalizeLoopbackCdpUrl(args['connect-over-cdp'])
+  : '';
 
-if (!fs.existsSync(edgePath)) throw new Error(`Microsoft Edge was not found at: ${edgePath}`);
+if (!connectOverCdp && !fs.existsSync(edgePath)) throw new Error(`Microsoft Edge was not found at: ${edgePath}`);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`Invalid CDP port: ${port}`);
 
-const chromium = await loadChromium();
-const context = await chromium.launchPersistentContext(profileDir, {
-  executablePath: edgePath,
-  headless: false,
-  viewport: null,
-  args: [
-    `--remote-debugging-port=${port}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--start-maximized',
-  ],
-});
+let plannedTargets = [];
+if (planPath) {
+  const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+  if (!Array.isArray(plan.databases) || !plan.databases.length) {
+    throw new Error(`Database selection plan contains no databases: ${planPath}`);
+  }
+  plannedTargets = plan.databases.map((database) => {
+    const targetUrl = String(database.targetUrl ?? database.launchUrl ?? '');
+    validateBrowserTarget(targetUrl, {
+      allowInsecureHttp: Boolean(database.allowInsecureHttp),
+      field: `database target for ${database.id ?? database.number ?? 'unknown'}`,
+    });
+    return {
+      number: database.number,
+      id: String(database.id ?? ''),
+      label: String(database.label ?? database.id ?? ''),
+      retrievalMode: String(database.retrievalMode ?? ''),
+      queryCapability: String(database.queryCapability ?? ''),
+      booleanSubmission: String(database.booleanSubmission ?? ''),
+      queryDialect: String(database.queryDialect ?? ''),
+      queryType: String(database.queryType ?? 'none'),
+      queryInputMode: String(database.queryInputMode ?? 'none'),
+      queryApplied: Boolean(database.queryApplied),
+      queryPending: Boolean(database.queryPending),
+      allowInsecureHttp: Boolean(database.allowInsecureHttp),
+      targetUrl,
+    };
+  });
+}
 
-const page = context.pages()[0] ?? await context.newPage();
-if (page.url() === 'about:blank') {
-  await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 90_000 }).catch(() => {});
+const chromium = await loadChromium();
+let browser = null;
+let context;
+let sessionMode;
+if (connectOverCdp) {
+  browser = await chromium.connectOverCDP(connectOverCdp);
+  context = browser.contexts()[0];
+  if (!context) throw new Error(`No Edge context is available at ${connectOverCdp}.`);
+  sessionMode = 'connect-over-cdp';
+} else {
+  context = await chromium.launchPersistentContext(profileDir, {
+    executablePath: edgePath,
+    headless: false,
+    viewport: null,
+    args: [
+      `--remote-debugging-port=${port}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--start-maximized',
+    ],
+  });
+  sessionMode = 'playwright-persistent';
+}
+
+const targets = plannedTargets.length
+  ? plannedTargets
+  : [{
+    number: null,
+    id: '',
+    label: 'start-url',
+    retrievalMode: '',
+    queryCapability: '',
+    booleanSubmission: '',
+    queryDialect: '',
+    queryType: 'none',
+    queryInputMode: 'none',
+    queryApplied: false,
+    queryPending: false,
+    allowInsecureHttp: parseBoolean(args['allow-insecure-http'], false),
+    targetUrl: validateBrowserTarget(startUrl, {
+      allowInsecureHttp: parseBoolean(args['allow-insecure-http'], false),
+      field: 'start URL',
+    }),
+  }];
+const openedPages = [];
+for (let index = 0; index < targets.length; index += 1) {
+  const target = targets[index];
+  const targetHost = target.targetUrl === 'about:blank' ? '' : new URL(target.targetUrl).hostname;
+  const pages = context.pages();
+  const exactPage = pages.find((candidate) => candidate.url() === target.targetUrl);
+  const sameHostPage = targetHost
+    ? pages.find((candidate) => {
+      try { return new URL(candidate.url()).hostname === targetHost; } catch { return false; }
+    })
+    : null;
+  const page = exactPage
+    ?? sameHostPage
+    ?? (index === 0 && pages[0]?.url() === 'about:blank' ? pages[0] : await context.newPage());
+  let navigationError = '';
+  const pageAlreadyOnTargetHost = targetHost && (() => {
+    try { return new URL(page.url()).hostname === targetHost; } catch { return false; }
+  })();
+  if (target.targetUrl !== 'about:blank' && page.url() !== target.targetUrl && !pageAlreadyOnTargetHost) {
+    await page.goto(target.targetUrl, { waitUntil: 'domcontentloaded', timeout: 90_000 })
+      .catch((error) => { navigationError = String(error?.message ?? error); });
+  }
+  openedPages.push({
+    ...target,
+    pageUrl: page.url(),
+    pageTitle: await page.title().catch(() => ''),
+    navigationError,
+  });
 }
 
 console.log(JSON.stringify({
   status: 'ready',
   browser: 'Microsoft Edge',
-  debuggerUrl: `http://127.0.0.1:${port}`,
-  profileDir,
-  pageUrl: page.url(),
-  note: 'Complete login, institutional authentication, consent, or CAPTCHA manually in the visible window.',
+  sessionMode,
+  debuggerUrl: connectOverCdp || `http://127.0.0.1:${port}`,
+  profileDir: connectOverCdp ? null : profileDir,
+  planPath,
+  pages: openedPages,
+  note: connectOverCdp
+    ? 'Attached to an existing visible Edge session. Complete login, institutional authentication, consent, or CAPTCHA manually.'
+    : 'Complete login, institutional authentication, consent, or CAPTCHA manually in the visible window.',
 }, null, 2));
 
 let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
-  await context.close().catch(() => {});
+  if (browser) await browser.close().catch(() => {});
+  else await context.close().catch(() => {});
 }
 
 process.once('SIGINT', close);
 process.once('SIGTERM', close);
-await new Promise((resolve) => context.once('close', resolve));
+await new Promise((resolve) => {
+  if (browser) browser.once('disconnected', resolve);
+  else context.once('close', resolve);
+});
 

@@ -1,10 +1,26 @@
-const BUNDLED_PLAYWRIGHT = 'file:///C:/Users/admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+function bundledPlaywrightCandidates() {
+  const executableNodeModules = path.resolve(path.dirname(process.execPath), '..', 'node_modules');
+  const roots = [
+    executableNodeModules,
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'codex-runtimes', 'codex-primary-runtime', 'dependencies', 'node', 'node_modules')
+      : '',
+    process.env.USERPROFILE
+      ? path.join(process.env.USERPROFILE, '.cache', 'codex-runtimes', 'codex-primary-runtime', 'dependencies', 'node', 'node_modules')
+      : '',
+    process.env.CODEX_NODE_MODULES,
+  ].filter(Boolean);
+  return roots.map((root) => pathToFileURL(path.join(root, 'playwright', 'index.mjs')).href);
+}
 
 export async function loadChromium() {
   const candidates = [
     process.env.PLAYWRIGHT_MODULE_URL,
     'playwright',
-    BUNDLED_PLAYWRIGHT,
+    ...bundledPlaywrightCandidates(),
   ].filter(Boolean);
   const failures = [];
   for (const candidate of [...new Set(candidates)]) {

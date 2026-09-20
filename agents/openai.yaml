@@ -1,7 +1,7 @@
 interface:
-  display_name: "WOS/CNKI 通用文献检索"
-  short_description: "脚本化检索 WOS/知网，判定页面状态并按语义分组导出 TXT"
-  default_prompt: "使用 $search-wos-cnki-literature 对齐检索策略分组，分别检索 WOS 与知网，并验证状态后筛选导出 TXT。"
+  display_name: "WOS、知网与全文库检索"
+  short_description: "先确认默认方案；布尔库强制布尔式，其他库分批检索"
+  default_prompt: "使用 $search-wos-cnki-literature，先询问是否使用默认的 WOS + 知网完整采集，同时按“布尔高级检索在前、关键词分批检索在后”显示编号库清单并等待我的选择。"
 
 policy:
   allow_implicit_invocation: true

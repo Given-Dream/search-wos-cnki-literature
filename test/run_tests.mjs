@@ -9,6 +9,22 @@ import {
   normalizeDatabaseQuery,
   rectIntersectsViewport,
 } from '../scripts/lib/retrieval.mjs';
+import {
+  buildDatabaseTarget,
+  defaultDatabases,
+  formatDatabaseMenu,
+  loadDatabaseCatalog,
+  looksLikeBooleanExpression,
+  makeSelectionPlan,
+  parseDatabaseSelection,
+  validateDatabaseCatalog,
+} from '../scripts/lib/database-catalog.mjs';
+import {
+  buildExternalEdgeArgs,
+  classifyAccessPage,
+  classifyCqvipPage,
+  normalizeLoopbackCdpUrl,
+} from '../scripts/lib/browser-session.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const skillRoot = path.resolve(testDir, '..');
@@ -32,6 +48,194 @@ function run(script, args) {
 }
 
 try {
+  const catalog = await loadDatabaseCatalog(path.join(skillRoot, 'config', 'database-catalog.json'));
+  assert.equal(catalog.databases.length, 22, 'catalog must contain WOS plus the 21 WHLIB full-text entries');
+  assert.equal(catalog.databases.filter((database) => database.whlibListed).length, 21, 'all WHLIB full-text entries must be represented');
+  assert.equal(catalog.databases.filter((database) => database.queryCapability === 'boolean').length, 20);
+  assert.equal(catalog.databases.filter((database) => database.queryCapability === 'keyword-batches').length, 2);
+  const firstKeywordIndex = catalog.databases.findIndex((database) => database.queryCapability === 'keyword-batches');
+  assert.ok(firstKeywordIndex > 0);
+  assert.ok(
+    catalog.databases.slice(0, firstKeywordIndex).every((database) => database.queryCapability === 'boolean'),
+    'all Boolean-capable databases must be numbered before keyword-batch databases',
+  );
+  assert.ok(
+    catalog.databases.slice(firstKeywordIndex).every((database) => database.queryCapability === 'keyword-batches'),
+    'no Boolean-capable database may appear after the keyword-batch group',
+  );
+  assert.ok(catalog.databases.every((database) => database.capabilityEvidence), 'every capability classification needs evidence');
+  assert.deepEqual(defaultDatabases(catalog).map((database) => database.id), ['wos', 'cnki']);
+  assert.deepEqual(
+    parseDatabaseSelection('3,5-6,2', catalog).map((database) => database.id),
+    ['cnki', 'elsevier', 'wiley', 'science'],
+    'numbered selection must deduplicate and follow stable catalog order',
+  );
+  assert.deepEqual(parseDatabaseSelection('0', catalog).map((database) => database.id), ['wos', 'cnki']);
+  assert.throws(() => parseDatabaseSelection('23', catalog), /unknown database selection/i);
+  assert.throws(() => parseDatabaseSelection('0,3', catalog), /cannot be combined/i);
+  const elsevier = catalog.databases.find((database) => database.id === 'elsevier');
+  const target = buildDatabaseTarget(elsevier, '(岩石 OR rock) AND mechanics', { queryType: 'boolean' });
+  assert.equal(target.queryApplied, true);
+  assert.match(target.url, /\(%E5%B2%A9%E7%9F%B3%20OR%20rock\)%20AND%20mechanics/);
+  assert.equal(looksLikeBooleanExpression('(rock OR stone) AND mechanics'), true);
+  assert.equal(looksLikeBooleanExpression('rock mechanics'), false);
+  assert.throws(
+    () => buildDatabaseTarget(elsevier, 'rock mechanics', { queryType: 'boolean' }),
+    /explicit site-specific expression/i,
+  );
+  assert.throws(
+    () => buildDatabaseTarget(elsevier, 'rock mechanics', { queryType: 'keyword' }),
+    /requires --boolean-query/i,
+  );
+  const customPlan = makeSelectionPlan(catalog, parseDatabaseSelection('3', catalog), {
+    mode: 'custom',
+    booleanQuery: '(rock OR stone) AND mechanics',
+  });
+  assert.equal(customPlan.databases[0].queryApplied, true);
+  assert.equal(customPlan.queryType, 'boolean');
+  const wiley = catalog.databases.find((database) => database.id === 'wiley');
+  const wileyPlan = makeSelectionPlan(catalog, [wiley], {
+    mode: 'custom',
+    booleanQuery: '(rock OR stone) AND mechanics',
+  });
+  assert.equal(wileyPlan.databases[0].queryApplied, false, 'advanced-form platforms must not pretend to submit a query');
+  assert.equal(wileyPlan.databases[0].queryPending, true);
+  assert.equal(wileyPlan.databases[0].queryInputMode, 'advanced-form');
+  assert.throws(
+    () => makeSelectionPlan(catalog, parseDatabaseSelection('3,4', catalog), {
+      mode: 'custom',
+      booleanQuery: '(rock OR stone) AND mechanics',
+    }),
+    /select exactly one database/i,
+    'one Boolean expression must never be reused across database dialects',
+  );
+  const nature = catalog.databases.find((database) => database.id === 'nature-nsj');
+  const naturePlan = makeSelectionPlan(catalog, [nature], { mode: 'custom', keywordQuery: 'rock mechanics' });
+  assert.equal(naturePlan.databases[0].queryApplied, true);
+  assert.equal(naturePlan.queryType, 'keyword');
+  assert.throws(
+    () => makeSelectionPlan(catalog, [nature], { mode: 'custom', booleanQuery: 'rock AND mechanics' }),
+    /requires --keyword-query/i,
+  );
+  assert.throws(
+    () => makeSelectionPlan(catalog, [nature], { mode: 'custom', keywordQuery: 'rock AND mechanics' }),
+    /do not paste a boolean expression/i,
+  );
+  const casDissertations = catalog.databases.find((database) => database.id === 'cas-dissertations');
+  assert.equal(casDissertations.number, 22);
+  assert.equal(casDissertations.launchUrl, 'http://dpaper.las.ac.cn/Dpaper/search/searchNew');
+  assert.equal(casDissertations.allowInsecureHttp, true, 'the verified HTTP-only CAS endpoint must be explicitly allowlisted');
+  const casPlan = makeSelectionPlan(catalog, [casDissertations], { mode: 'custom' });
+  assert.equal(casPlan.databases[0].allowInsecureHttp, true, 'the HTTP exception must survive plan generation');
+  const rejectedHttpCatalog = structuredClone(catalog);
+  rejectedHttpCatalog.databases.find((database) => database.id === 'elsevier').launchUrl = 'http://www.sciencedirect.com/';
+  assert.throws(
+    () => validateDatabaseCatalog(rejectedHttpCatalog),
+    /must use HTTPS/i,
+    'HTTP must remain rejected unless the catalog explicitly allowlists that database',
+  );
+  const cqvip = catalog.databases.find((database) => database.id === 'cqvip');
+  assert.equal(cqvip.number, 17);
+  assert.equal(cqvip.queryCapability, 'boolean');
+  assert.equal(cqvip.booleanSubmission, 'visible-search-box');
+  assert.equal(cqvip.requiresPersistentProfile, true);
+  assert.equal(cqvip.automationScript, 'scripts/cqvip_search.mjs');
+  const databaseMenu = formatDatabaseMenu(catalog);
+  assert.match(databaseMenu, /^0\. 默认：1 Web of Science \+ 2 CNKI 中国学术期刊/m);
+  assert.match(databaseMenu, /【可构建布尔高级检索式：必须使用各库专用布尔逻辑】/);
+  assert.match(databaseMenu, /【不构建布尔表达式：关键词\/字段分批检索后合并去重】/);
+  assert.ok(databaseMenu.indexOf('20. 尚唯科技报告') < databaseMenu.indexOf('21. Nature + NSJ'));
+
+  assert.equal(
+    classifyAccessPage({ status: 412, finalUrl: 'https://qikan.cqvip.com/', title: '', bodyText: '' }),
+    'automation-restricted',
+    'CQVIP 412 must be reported as an automation restriction rather than site unavailability',
+  );
+  assert.equal(
+    classifyAccessPage({ status: 412, finalUrl: 'https://example.org/', title: '', bodyText: '' }),
+    'http-412',
+    'the CQVIP exception must not hide unrelated HTTP failures',
+  );
+  assert.equal(
+    classifyCqvipPage({
+      finalUrl: 'https://qikan.cqvip.com/',
+      title: '中文期刊服务平台',
+      bodyText: '中文期刊服务平台',
+      searchInputVisible: true,
+    }),
+    'ready',
+  );
+  assert.equal(
+    classifyCqvipPage({
+      finalUrl: 'https://qikan.cqvip.com/',
+      title: '412 Precondition Failed',
+      bodyText: '',
+      searchInputVisible: false,
+    }),
+    'automation-restricted',
+  );
+  assert.equal(normalizeLoopbackCdpUrl('http://localhost:9333/'), 'http://localhost:9333');
+  assert.throws(() => normalizeLoopbackCdpUrl('http://192.0.2.1:9333'), /loopback/i);
+  const externalEdgeArgs = buildExternalEdgeArgs({
+    profileDir: path.join(temporaryRoot, 'edge-profile'),
+    port: 9333,
+    startUrls: ['https://qikan.cqvip.com/'],
+  });
+  assert.ok(externalEdgeArgs.includes('--remote-debugging-address=127.0.0.1'));
+  assert.ok(externalEdgeArgs.includes('--remote-debugging-port=9333'));
+  assert.ok(!externalEdgeArgs.some((value) => /enable-automation|disable-blink-features/i.test(value)), 'do not add stealth or fingerprint-evasion flags');
+  const edgeDryRun = runRaw('start_edge_cdp.mjs', [
+    '--profile-dir', path.join(temporaryRoot, 'edge-profile'),
+    '--port', '9333',
+    '--start-url', 'https://qikan.cqvip.com/',
+    '--dry-run', 'true',
+  ]);
+  assert.equal(edgeDryRun.status, 0, `start_edge_cdp dry run failed: ${edgeDryRun.stderr}`);
+  const edgeDryRunPayload = JSON.parse(edgeDryRun.stdout);
+  assert.equal(edgeDryRunPayload.status, 'dry-run');
+  assert.equal(edgeDryRunPayload.debuggerUrl, 'http://127.0.0.1:9333');
+
+  const listResult = runRaw('select_databases.mjs', ['--list']);
+  assert.equal(listResult.status, 0, 'database menu must render without side effects');
+  assert.match(listResult.stdout, /是否使用默认的 WOS \+ 知网完整采集？/);
+  assert.match(listResult.stdout, /布尔组必须使用各库专用布尔表达式/);
+  assert.match(listResult.stdout, /17\. 维普中文期刊服务平台/);
+  assert.match(listResult.stdout, /22\. 中国科学院学位论文/);
+  const genericQueryPlan = runRaw('select_databases.mjs', ['--selection', '3', '--query', 'rock mechanics']);
+  assert.notEqual(genericQueryPlan.status, 0);
+  assert.match(genericQueryPlan.stderr, /generic --query is disabled/i);
+  const wrongBooleanPlan = runRaw('select_databases.mjs', ['--selection', '3', '--keyword-query', 'rock mechanics']);
+  assert.notEqual(wrongBooleanPlan.status, 0);
+  assert.match(wrongBooleanPlan.stderr, /requires --boolean-query/i);
+  const validBooleanPlan = runRaw('select_databases.mjs', [
+    '--selection', '3',
+    '--boolean-query', '(rock OR stone) AND mechanics',
+  ]);
+  assert.equal(validBooleanPlan.status, 0, validBooleanPlan.stderr);
+  assert.equal(JSON.parse(validBooleanPlan.stdout).queryType, 'boolean');
+  const validKeywordPlan = runRaw('select_databases.mjs', [
+    '--selection', '21',
+    '--keyword-query', 'rock mechanics',
+  ]);
+  assert.equal(validKeywordPlan.status, 0, validKeywordPlan.stderr);
+  assert.equal(JSON.parse(validKeywordPlan.stdout).queryType, 'keyword');
+  const wrongKeywordPlan = runRaw('select_databases.mjs', [
+    '--selection', '21',
+    '--boolean-query', 'rock AND mechanics',
+  ]);
+  assert.notEqual(wrongKeywordPlan.status, 0);
+  assert.match(wrongKeywordPlan.stderr, /requires --keyword-query/i);
+  const cqvipGenericQuery = runRaw('cqvip_search.mjs', ['--query', 'rock mechanics']);
+  assert.notEqual(cqvipGenericQuery.status, 0);
+  assert.match(cqvipGenericQuery.stderr, /generic --query is disabled/i);
+  const cqvipNonBooleanQuery = runRaw('cqvip_search.mjs', ['--boolean-query', 'rock mechanics']);
+  assert.notEqual(cqvipNonBooleanQuery.status, 0);
+  assert.match(cqvipNonBooleanQuery.stderr, /requires an explicit/i);
+  const planPath = path.join(temporaryRoot, 'database-selection.json');
+  run('select_databases.mjs', ['--default', '--output', planPath]);
+  const savedPlan = JSON.parse(await fs.readFile(planPath, 'utf8'));
+  assert.deepEqual(savedPlan.databases.map((database) => database.id), ['wos', 'cnki']);
+
   const normalizedQuery = normalizeDatabaseQuery("TKA%=(\n  'multi word concept'\n  + 'synonym'\n)\nAND TI%=('method')", 'CNKI');
   assert.ok(!/[\r\n]/.test(normalizedQuery), 'professional queries must be normalized to one line');
   assert.ok(normalizedQuery.includes("'multi word concept'"), 'whitespace inside quoted phrases must be preserved');
@@ -167,7 +371,7 @@ try {
   const wosBuffer = await fs.readFile(path.join(outputDir, 'TOPIC_A_WOS.txt'));
   assert.deepEqual([...wosBuffer.subarray(0, 3)], [0xEF, 0xBB, 0xBF], 'TXT must include UTF-8 BOM');
 
-  console.log('PASS: query state diagnosis, viewport CAPTCHA detection, semantic group mapping, generic extraction, selection, year exception, publication gates, independent quotas, GB/T year, and BOM');
+  console.log('PASS: confirmation menu, Boolean-first numbering, mandatory database-specific Boolean queries, keyword-batch isolation, 22-source catalog, HTTP allowlist, external Edge/CDP routing, CQVIP restriction diagnosis, query targets, viewport CAPTCHA detection, semantic group mapping, generic extraction, selection, year exception, publication gates, independent quotas, GB/T year, and BOM');
 } finally {
   const resolvedTemporaryRoot = path.resolve(temporaryRoot);
   if (!resolvedTemporaryRoot.startsWith(path.resolve(os.tmpdir()))) {
