@@ -1,8 +1,10 @@
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from './lib/cli.mjs';
-import { buildExternalEdgeArgs, normalizeLoopbackCdpUrl, validateBrowserTarget } from './lib/browser-session.mjs';
+import { buildExternalEdgeArgs, classifyNativeEdgeWindow, normalizeLoopbackCdpUrl, validateBrowserTarget } from './lib/browser-session.mjs';
+import { loadChromium } from './lib/playwright.mjs';
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value ?? fallback);
@@ -35,6 +37,7 @@ async function inspectCdpEndpoint(cdpUrl, timeoutMs = 2_000) {
 
 const usage = 'Usage: node scripts/start_edge_cdp.mjs [--profile-dir <dir>] [--port 9333] [--start-url <url>] [--dry-run true]';
 const args = parseArgs(process.argv.slice(2));
+if (args.headless !== undefined) throw new Error('Headless Edge is disabled. Use a normal visible Edge desktop window.');
 if (args.help) {
   console.log(usage);
   process.exit(0);
@@ -45,7 +48,7 @@ const profileDir = path.resolve(String(args['profile-dir'] ?? '.edge-literature-
 const port = boundedInteger(args.port, 9333, 1024, 65535);
 const timeoutMs = boundedInteger(args['timeout-ms'], 30_000, 2_000, 120_000);
 const allowInsecureHttp = parseBoolean(args['allow-insecure-http'], false);
-const startUrl = validateBrowserTarget(String(args['start-url'] ?? 'https://qikan.cqvip.com/'), {
+const startUrl = validateBrowserTarget(String(args['start-url'] ?? 'about:blank'), {
   allowInsecureHttp,
   field: 'Edge start URL',
 });
@@ -61,23 +64,37 @@ if (parseBoolean(args['dry-run'], false)) {
     profileDir,
     startUrl,
     args: edgeArgs,
+    launchMethod: 'Windows-Start-Process-Normal',
+    requireNativeWindowVisibility: true,
+    userVerificationSurface: 'ordinary-Edge-desktop-window',
+    localRelayPanelAllowed: false,
   }, null, 2));
   process.exit(0);
 }
 
+if (process.platform !== 'win32') throw new Error('This native Edge launcher requires an interactive Windows desktop.');
 if (!fs.existsSync(edgePath)) throw new Error(`Microsoft Edge was not found at: ${edgePath}`);
+const nativeHelper = fileURLToPath(new URL('./edge_native_window.ps1', import.meta.url));
+function runNativeHelper(extraArgs = [], input) {
+  const inspectionPid = extraArgs.length ? Number(extraArgs[1]) : 0;
+  if (extraArgs.length && (!Number.isInteger(inspectionPid) || inspectionPid <= 0)) throw new Error('Invalid native Edge process PID.');
+  // Execute only this bundled helper as inline code; never change the machine's script execution policy.
+  // Launch URLs and paths remain JSON data on stdin, not PowerShell command text.
+  const code = `& {\n${fs.readFileSync(nativeHelper, 'utf8')}\n} ${inspectionPid ? `-InspectProcessId ${inspectionPid}` : ''}`;
+  const encoded = Buffer.from(code, 'utf16le').toString('base64');
+  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+    input, encoding: 'utf8', windowsHide: true, timeout: 15_000,
+  });
+  if (result.error || result.status !== 0) throw new Error(`Native Edge window operation failed: ${result.error?.message || result.stderr.trim()}`);
+  return JSON.parse(result.stdout.replace(/^\uFEFF/, '').trim());
+}
 
 const existingEndpoint = await inspectCdpEndpoint(debuggerUrl);
 let childPid = null;
 let status = 'already-running';
 if (!existingEndpoint) {
-  const child = spawn(edgePath, edgeArgs, {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: false,
-  });
-  childPid = child.pid ?? null;
-  child.unref();
+  if (parseBoolean(args['connect-only'], false)) throw new Error('No existing Edge session is available. Open the ordinary Edge window first.');
+  childPid = runNativeHelper([], JSON.stringify({ edgePath, edgeArgs })).childPid;
   status = 'started';
 
   const deadline = Date.now() + timeoutMs;
@@ -90,6 +107,26 @@ if (!existingEndpoint) {
   }
 }
 
+const endpoint = await inspectCdpEndpoint(debuggerUrl);
+let nativeWindow = {};
+try {
+  const browser = await (await loadChromium()).connectOverCDP(debuggerUrl);
+  try {
+    const cdp = await browser.newBrowserCDPSession();
+    const { processInfo } = await cdp.send('SystemInfo.getProcessInfo');
+    const browserProcessId = processInfo.find(item => item.type === 'browser')?.id;
+    if (!browserProcessId) throw new Error('No native browser process PID was reported.');
+    nativeWindow = runNativeHelper(['-InspectProcessId', String(browserProcessId)]);
+  } finally { await browser.close(); }
+} catch (error) {
+  nativeWindow = { visible: false, error: String(error.message).split('\n')[0] };
+}
+const visibility = classifyNativeEdgeWindow({ browserVersion: endpoint?.Browser, userAgent: endpoint?.['User-Agent'], nativeWindow });
+if (visibility !== 'visible-native-window') {
+  console.log(JSON.stringify({ status: 'native-window-unconfirmed', visibility, nativeWindow, ready: false, localRelayPanelAllowed: false }));
+  throw new Error('Cannot confirm a visible native Edge desktop window. Repair the native Windows launch in the interactive desktop and retry. Do not replace it with a localhost panel or headless browser.');
+}
+
 console.log(JSON.stringify({
   status,
   browser: 'Microsoft Edge',
@@ -97,5 +134,10 @@ console.log(JSON.stringify({
   debuggerUrl,
   profileDir,
   startUrl,
-  note: 'Use the visible Edge window. Complete login, institutional authentication, consent, or CAPTCHA manually; do not export browser secrets.',
+  ready: true,
+  visibility,
+  nativeWindow,
+  launchMethod: 'Windows-Start-Process-Normal',
+  localRelayPanelAllowed: false,
+  note: '普通 Edge 窗口已打开并保持运行。请在该原生窗口手动完成登录、机构认证、Cookie 同意或验证码；无需访问本地端口面板。',
 }, null, 2));

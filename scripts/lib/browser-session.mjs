@@ -46,9 +46,18 @@ export function buildExternalEdgeArgs({ profileDir, port, startUrls = [], allowI
     `--user-data-dir=${resolvedProfileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
+    '--new-window',
     '--start-maximized',
     ...normalizedUrls,
   ];
+}
+
+export function classifyNativeEdgeWindow({ browserVersion = '', userAgent = '', nativeWindow = {} } = {}) {
+  if (/headless/i.test(`${browserVersion} ${userAgent}`)) return 'headless-rejected';
+  if (!nativeWindow.browserProcessId || !nativeWindow.windowHandle || nativeWindow.visible !== true || nativeWindow.interactiveDesktop !== true) {
+    return 'native-window-unconfirmed';
+  }
+  return 'visible-native-window';
 }
 
 export function classifyAccessPage({ status, finalUrl = '', title = '', bodyText = '' }) {

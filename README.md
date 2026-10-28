@@ -172,6 +172,10 @@ node scripts\extract_strategy.mjs `
 
 ### 5. 启动可见 Edge 会话
 
+**强制使用已打开并保持运行的普通 Edge 桌面窗口。** 默认启动链路为 Windows `Start-Process -WindowStyle Normal`，使用独立配置目录打开原生窗口，并核对浏览器进程的原生窗口句柄、可见状态及所在桌面与当前交互桌面一致；只有通过核对后才能报告“普通 Edge 窗口已打开并保持运行”。调试端口可达或页面能渲染，都不能代替桌面窗口可见性检查。
+
+禁止用无界面或隐藏的 Edge、内嵌浏览器、iframe、本地截图转发及输入转接面板代替这个窗口。登录、Cookie 同意、机构认证和验证码一律在普通 Edge 窗口中由用户手动完成；不再要求用户打开 `http://127.0.0.1:端口/` 面板。CDP 只作为脚本内部连接，不能充当用户操作界面。窗口不可见时停止采集并修复原生启动，不反复要求用户在不可见会话中验证。
+
 ```powershell
 node scripts\edge_session.mjs `
   --profile-dir D:\codex\.edge-wos-cnki-profile `
@@ -179,7 +183,7 @@ node scripts\edge_session.mjs `
   --plan D:\codex\literature-run\database-selection.json
 ```
 
-保持进程运行。若出现登录、机构认证或滑块验证，请在 Edge 中手动完成。
+保持普通 Edge 窗口及脚本连接运行。手动验证完成后，复用同一会话在后台标签页采集；后台不等于启动隐藏浏览器。不抢占前台焦点，不反复最大化或调整窗口，不操作桌面鼠标键盘，不循环截图。用户可自行最小化窗口或切换到其他工作；脚本不自动将其切回前台。
 
 自定义库中，只有目录明确标注可用 `query-url` 的条目才会打开带编码查询的检索链接；`advanced-form` 和其他 `browser-assisted` 条目打开检索页并保留 `queryPending: true`，等待按目标库语法填写表单或完成认证。打开页面不代表已取得全文权限，也不产生符合 WOS/知网数据契约的候选记录。
 
@@ -352,7 +356,7 @@ DOI: ...
 node scripts\test_database_access.mjs --all --output D:\codex\literature-run\database-access.json
 ```
 
-该报告只验证入口页导航，并始终将 `institutionalFullTextVerified` 保持为 `false`；全文授权必须在用户合法登录或机构网络中另行确认。
+该测试连接前述已核对可见性的原生 Edge 会话，在后台标签页检查入口；默认内部端点为9333，可用 `--debugger-url` 指定已有会话。它不再自动启动新的无界面浏览器，`--headless true` 会被拒绝。该报告只验证入口页导航，并始终将 `institutionalFullTextVerified` 保持为 `false`；全文授权必须另行确认。
 
-完成检索和校验后，应在运行 `edge_session.mjs` 的终端按 `Ctrl+C` 结束会话，避免浏览器继续保留后台页面活动。
+完成检索和校验后，停止查询、轮询并按 `Ctrl+C` 断开脚本。普通 Edge 窗口独立运行；用户要求保留时保持打开，否则只关闭本次专用窗口，不影响日常浏览器窗口。
 

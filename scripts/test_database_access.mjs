@@ -1,10 +1,12 @@
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from './lib/cli.mjs';
 import { loadChromium } from './lib/playwright.mjs';
 import { buildDatabaseTarget, loadDatabaseCatalog, parseDatabaseSelection } from './lib/database-catalog.mjs';
-import { classifyAccessPage } from './lib/browser-session.mjs';
+import { classifyAccessPage, normalizeLoopbackCdpUrl } from './lib/browser-session.mjs';
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value ?? fallback);
@@ -12,21 +14,13 @@ function boundedInteger(value, fallback, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, Math.round(parsed)));
 }
 
-function parseBoolean(value, fallback) {
-  if (value === undefined) return fallback;
-  if (value === true) return true;
-  if (/^(?:1|true|yes|on|是)$/iu.test(String(value))) return true;
-  if (/^(?:0|false|no|off|否)$/iu.test(String(value))) return false;
-  throw new Error(`Invalid boolean value: ${value}`);
-}
-
-async function inspectDatabase(context, database, timeoutMs, query, queryType) {
+async function inspectDatabase(createPage, database, timeoutMs, query, queryType) {
   const target = query
     ? buildDatabaseTarget(database, query, { queryType })
     : { url: database.whlibUrl || database.launchUrl, queryApplied: false };
   const requestedUrl = target.url;
   const startedAt = Date.now();
-  const page = await context.newPage();
+  const page = await createPage();
   try {
     const response = await page.goto(requestedUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     await page.waitForTimeout(1_000);
@@ -55,7 +49,7 @@ async function inspectDatabase(context, database, timeoutMs, query, queryType) {
       elapsedMs: Date.now() - startedAt,
       institutionalFullTextVerified: false,
       note: state === 'automation-restricted'
-        ? 'Fresh automation context was restricted. Retest with a user-controlled visible CDP profile; this is not proof that the site is unavailable.'
+        ? 'The normal Edge session was restricted. This is not proof that the site is unavailable; do not bypass the gate.'
         : 'Landing-page navigation only; this result does not prove subscription or full-text entitlement.',
     };
   } catch (error) {
@@ -85,7 +79,7 @@ async function inspectDatabase(context, database, timeoutMs, query, queryType) {
   }
 }
 
-const usage = 'Usage: node scripts/test_database_access.mjs --all|--selection <numbers-or-ids> --output <json> [--boolean-query <site-specific-expression>|--keyword-query <text>] [--headless true] [--timeout-ms 30000] [--concurrency 3]';
+const usage = 'Usage: node scripts/test_database_access.mjs --all|--selection <numbers-or-ids> --output <json> [--debugger-url <existing-native-Edge-CDP>] [--boolean-query <site-specific-expression>|--keyword-query <text>] [--timeout-ms 30000] [--concurrency 1]';
 const args = parseArgs(process.argv.slice(2));
 if (!args.all && args.selection === undefined) throw new Error(usage);
 if (!args.output) throw new Error(usage);
@@ -93,8 +87,8 @@ if (!args.output) throw new Error(usage);
 const catalog = await loadDatabaseCatalog(args.catalog);
 const databases = args.all ? catalog.databases : parseDatabaseSelection(args.selection, catalog);
 const timeoutMs = boundedInteger(args['timeout-ms'], 30_000, 5_000, 120_000);
-const concurrency = boundedInteger(args.concurrency, 3, 1, 6);
-const headless = parseBoolean(args.headless, true);
+const concurrency = boundedInteger(args.concurrency, 1, 1, 6);
+if (args.headless !== undefined) throw new Error('Headless Edge is disabled. Start the ordinary visible Edge session first.');
 if (args.query !== undefined) {
   throw new Error('Generic --query is disabled. Use --boolean-query or --keyword-query for one selected database.');
 }
@@ -110,23 +104,36 @@ const edgePath = path.resolve(String(args['edge-path'] ?? 'C:/Program Files (x86
 if (!fsSync.existsSync(edgePath)) throw new Error(`Microsoft Edge was not found at: ${edgePath}`);
 
 const chromium = await loadChromium();
-const browser = await chromium.launch({
-  executablePath: edgePath,
-  headless,
-  args: ['--no-first-run', '--no-default-browser-check'],
-});
+const debuggerUrl = normalizeLoopbackCdpUrl(args['debugger-url']);
+const visibilityCheck = spawnSync(process.execPath, [fileURLToPath(new URL('./start_edge_cdp.mjs', import.meta.url)), '--port', new URL(debuggerUrl).port || '80', '--edge-path', edgePath, '--connect-only', 'true'], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+if (visibilityCheck.error || visibilityCheck.status !== 0) throw new Error(`Ordinary Edge window is not ready: ${visibilityCheck.error?.message || visibilityCheck.stderr.trim()}`);
+const nativeEvidence = JSON.parse(visibilityCheck.stdout.trim());
+if (!nativeEvidence.ready) throw new Error('No visible native Edge window was confirmed.');
+const browser = await chromium.connectOverCDP(debuggerUrl);
 
 const results = new Array(databases.length);
 let cursor = 0;
 try {
-  const context = await browser.newContext({ locale: 'zh-CN' });
+  const context = browser.contexts()[0];
+  if (!context) throw new Error('No context in the existing native Edge session.');
+  const cdp = await browser.newBrowserCDPSession();
+  let creationTail = Promise.resolve();
+  function createPage() {
+    const creation = creationTail.then(async () => {
+      const created = context.waitForEvent('page');
+      await cdp.send('Target.createTarget', { url: 'about:blank', background: true });
+      return created;
+    });
+    creationTail = creation.catch(() => {});
+    return creation;
+  }
   async function worker() {
     while (true) {
       const index = cursor;
       cursor += 1;
       if (index >= databases.length) return;
       const database = databases[index];
-      const result = await inspectDatabase(context, database, timeoutMs, query, queryType);
+      const result = await inspectDatabase(createPage, database, timeoutMs, query, queryType);
       results[index] = result;
       console.log(`TEST ${index + 1}/${databases.length} ${database.id}: ${result.state} -> ${result.finalUrl || result.requestedUrl}`);
     }
@@ -143,14 +150,13 @@ const summary = results.reduce((counts, result) => {
 const report = {
   schemaVersion: 1,
   testedAt: new Date().toISOString(),
-  method: query
-    ? 'Fresh Microsoft Edge profile, Playwright navigation to configured search URLs when available and launch URLs otherwise; no login and no access-control bypass.'
-    : 'Fresh Microsoft Edge profile, Playwright navigation to each WHLIB-listed landing URL; no login and no access-control bypass.',
+  method: 'Existing verified native Microsoft Edge window, background tabs, no automated login or access-control bypass.',
   scope: 'Landing-page reachability only. Full-text entitlement is not tested.',
   query,
   queryType,
   catalogSource: catalog.source,
-  headless,
+  headless: false,
+  nativeWindow: nativeEvidence.nativeWindow,
   timeoutMs,
   concurrency,
   summary,
