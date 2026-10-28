@@ -10,13 +10,25 @@ The scripts try `PLAYWRIGHT_MODULE_URL`, the normal `playwright` package, and th
 
 Create a confirmed database selection plan before starting a persistent session. Never navigate to WOS, CNKI, or another database before the user answers the required first-turn question.
 
-Start a persistent session from the confirmed plan:
+## Mandatory normal Edge desktop window
+
+All interactive retrieval, including WOS, CNKI, and CQVIP, must use a normal Microsoft Edge desktop window that is opened and kept running. This is a hard requirement. Headless or hidden Edge, in-app browser frames, screenshot streaming, and localhost input/verification relay panels are not alternatives. Do not instruct the user to open a local-port URL to handle consent, login, or a slider.
+
+On Windows, `edge_session.mjs` now calls `start_edge_cdp.mjs`, which starts Edge using `Start-Process -WindowStyle Normal` with a dedicated persistent profile, `--new-window`, and `--start-maximized`. It then obtains the browser PID from CDP and verifies that process's native `MainWindowHandle`, `IsWindowVisible`, and match to the interactive input desktop. CDP readiness alone is insufficient. A headless endpoint is rejected. `native-window-unconfirmed` is a launch failure, so no batch collection may proceed and no “window is open” claim may be made.
+
+Start the ordinary Edge window from the confirmed plan:
 
 ```powershell
 node scripts/edge_session.mjs --profile-dir D:\codex\.edge-wos-cnki-profile --port 9333 --plan D:\codex\literature-run\database-selection.json
 ```
 
-Without `--plan` or an explicit `--start-url`, the session opens `about:blank`; it must not assume WOS. Keep it alive only while the run is active. Collectors connect to `http://127.0.0.1:9333`. When collection and validation finish, return to the session terminal and press `Ctrl+C`; confirm the process exits so the profile does not retain background page activity.
+Without `--plan` or an explicit `--start-url`, the session opens `about:blank`; it must not assume WOS. A loopback CDP port remains an internal automation connection, never a user-facing verification page or relay. Do not describe an internal connection as the user's browser surface.
+
+Before asking for a manual step, confirm native-window evidence and tell the user to act directly in the ordinary Edge window. Report “普通 Edge 窗口已打开并保持运行” only after that evidence exists. If the user reports no visible window, repair the normal Windows launch, including execution in the user's interactive desktop when a restricted worker cannot create a visible window. Do not repeatedly ask for verification in an invisible session or fall back to a relay. Keep certificate validation enabled; do not solve TLS failures by ignoring certificates.
+
+Once the window is confirmed and the user clears any gate, reuse the same persistent session. Background collection means background tabs and DOM/network access inside that native session; it does not mean a hidden browser process. Do not steal focus, repeatedly maximize or resize the native window, inject desktop mouse or keyboard events, or poll screenshots. The user may minimize or switch away from the window while working; do not restore it automatically. If another real challenge appears, pause and hand it to the user in that ordinary window.
+
+When finished, stop query workers and polling and disconnect the script (`Ctrl+C` for `edge_session.mjs`). The external Edge window survives this disconnection. Keep it open if requested; otherwise close only the dedicated task window. Never close the user's everyday Edge windows or modify the everyday profile or system proxy.
 
 ## CQVIP external Edge/CDP mode
 
@@ -44,7 +56,7 @@ node scripts/cqvip_search.mjs --debugger-url http://127.0.0.1:9333 --boolean-que
 
 `ready` means the visible CQVIP search input is present. `manual-action-required` means the user must complete a visible login or verification step. `automation-restricted` means the attached session still shows a 403/412-style gate; stop and report it rather than retrying aggressively. The script does not read cookies, tokens, passwords, or browser storage. It submits the search form only; it does not claim normalized candidate extraction or full-text entitlement.
 
-The dedicated profile is reusable, but do not point this workflow at the user's everyday Edge profile. Bind CDP only to `127.0.0.1`, close the dedicated Edge window when the literature run is finished, and do not expose the debugging port to the network.
+The dedicated profile is reusable, but do not point this workflow at the user's everyday Edge profile. Bind CDP only to `127.0.0.1`; preserve a window the user asked to keep open and do not expose the debugging port to the network.
 
 ## Strategy extraction
 
@@ -93,6 +105,7 @@ Create the journal-verification input after DOI/document-type/year/relevance pre
 
 ## Checks
 
+- Verify the native Edge window, not just CDP, before saying it is open or starting collection.
 - Confirm active URL and title before submission.
 - Save exact query and displayed count.
 - Save the collection state sidecar and distinguish `confirmed-empty`, `transient-error`, and `partial`.

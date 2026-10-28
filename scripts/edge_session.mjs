@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from './lib/cli.mjs';
 import { loadChromium } from './lib/playwright.mjs';
 import { normalizeLoopbackCdpUrl, validateBrowserTarget } from './lib/browser-session.mjs';
@@ -13,6 +15,7 @@ function parseBoolean(value, fallback = false) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+if (args.headless !== undefined) throw new Error('Headless Edge is disabled. Use a normal visible Edge desktop window.');
 const edgePath = String(args['edge-path'] ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe');
 const profileDir = path.resolve(String(args['profile-dir'] ?? '.edge-wos-cnki-profile'));
 const port = Number(args.port ?? 9333);
@@ -59,24 +62,28 @@ const chromium = await loadChromium();
 let browser = null;
 let context;
 let sessionMode;
+const nativeLaunchArgs = [fileURLToPath(new URL('./start_edge_cdp.mjs', import.meta.url)), '--edge-path', edgePath, '--profile-dir', profileDir];
+if (connectOverCdp) {
+  nativeLaunchArgs.push('--port', new URL(connectOverCdp).port || '80', '--connect-only', 'true');
+} else {
+  const firstTarget = plannedTargets[0];
+  nativeLaunchArgs.push('--port', String(port), '--start-url', firstTarget?.targetUrl || startUrl);
+  if (firstTarget?.allowInsecureHttp || parseBoolean(args['allow-insecure-http'], false)) nativeLaunchArgs.push('--allow-insecure-http', 'true');
+}
+const nativeResult = spawnSync(process.execPath, nativeLaunchArgs, { encoding: 'utf8', windowsHide: true, timeout: 150_000 });
+if (nativeResult.error || nativeResult.status !== 0) throw new Error(`Ordinary Edge window is not ready: ${nativeResult.error?.message || nativeResult.stderr.trim()}`);
+const nativeEvidence = JSON.parse(nativeResult.stdout.replace(/^\uFEFF/, '').trim());
+if (!nativeEvidence.ready) throw new Error('Native Edge visibility was not confirmed. No database pages were opened by this session.');
 if (connectOverCdp) {
   browser = await chromium.connectOverCDP(connectOverCdp);
   context = browser.contexts()[0];
   if (!context) throw new Error(`No Edge context is available at ${connectOverCdp}.`);
   sessionMode = 'connect-over-cdp';
 } else {
-  context = await chromium.launchPersistentContext(profileDir, {
-    executablePath: edgePath,
-    headless: false,
-    viewport: null,
-    args: [
-      `--remote-debugging-port=${port}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--start-maximized',
-    ],
-  });
-  sessionMode = 'playwright-persistent';
+  browser = await chromium.connectOverCDP(nativeEvidence.debuggerUrl);
+  context = browser.contexts()[0];
+  if (!context) throw new Error('No context is available in the ordinary Edge window.');
+  sessionMode = 'native-edge-desktop';
 }
 
 const targets = plannedTargets.length
@@ -137,9 +144,10 @@ console.log(JSON.stringify({
   profileDir: connectOverCdp ? null : profileDir,
   planPath,
   pages: openedPages,
-  note: connectOverCdp
-    ? 'Attached to an existing visible Edge session. Complete login, institutional authentication, consent, or CAPTCHA manually.'
-    : 'Complete login, institutional authentication, consent, or CAPTCHA manually in the visible window.',
+  visibility: nativeEvidence.visibility,
+  nativeWindow: nativeEvidence.nativeWindow,
+  localRelayPanelAllowed: false,
+  note: '普通 Edge 窗口已打开并保持运行。所有手动验证均在该原生窗口完成；确认后使用同一会话后台检索。',
 }, null, 2));
 
 let closing = false;

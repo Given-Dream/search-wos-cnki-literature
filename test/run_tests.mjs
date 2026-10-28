@@ -23,6 +23,7 @@ import {
   buildExternalEdgeArgs,
   classifyAccessPage,
   classifyCqvipPage,
+  classifyNativeEdgeWindow,
   normalizeLoopbackCdpUrl,
 } from '../scripts/lib/browser-session.mjs';
 
@@ -183,6 +184,18 @@ try {
   });
   assert.ok(externalEdgeArgs.includes('--remote-debugging-address=127.0.0.1'));
   assert.ok(externalEdgeArgs.includes('--remote-debugging-port=9333'));
+  assert.ok(externalEdgeArgs.includes('--new-window'));
+  assert.ok(externalEdgeArgs.includes('--start-maximized'));
+  assert.equal(classifyNativeEdgeWindow({ browserVersion: 'Edg/142', nativeWindow: { browserProcessId: 456, windowHandle: 789, visible: true, interactiveDesktop: true } }), 'visible-native-window');
+  assert.equal(classifyNativeEdgeWindow({ nativeWindow: { browserProcessId: 456, windowHandle: 789, visible: true, interactiveDesktop: false } }), 'native-window-unconfirmed', 'a window on a noninteractive worker desktop must not masquerade as the user window');
+  assert.equal(classifyNativeEdgeWindow({ browserVersion: 'Edg/142' }), 'native-window-unconfirmed', 'a live CDP endpoint alone cannot establish a desktop window');
+  assert.equal(classifyNativeEdgeWindow({ nativeWindow: { browserProcessId: 456, windowHandle: 789, visible: false } }), 'native-window-unconfirmed', 'a hidden native window must not be reported as ready');
+  assert.equal(classifyNativeEdgeWindow({ userAgent: 'HeadlessChrome/142', nativeWindow: { browserProcessId: 456, windowHandle: 789, visible: true } }), 'headless-rejected', 'headless mode cannot masquerade as the manual verification window');
+  for (const script of ['start_edge_cdp.mjs', 'edge_session.mjs', 'test_database_access.mjs']) {
+    const headlessAttempt = runRaw(script, ['--headless', 'true', '--all', '--output', path.join(temporaryRoot, 'unused.json')]);
+    assert.notEqual(headlessAttempt.status, 0, `${script} must refuse a headless session before launching or navigating`);
+    assert.match(headlessAttempt.stderr, /headless edge is disabled/i);
+  }
   assert.ok(!externalEdgeArgs.some((value) => /enable-automation|disable-blink-features/i.test(value)), 'do not add stealth or fingerprint-evasion flags');
   const edgeDryRun = runRaw('start_edge_cdp.mjs', [
     '--profile-dir', path.join(temporaryRoot, 'edge-profile'),
@@ -194,6 +207,9 @@ try {
   const edgeDryRunPayload = JSON.parse(edgeDryRun.stdout);
   assert.equal(edgeDryRunPayload.status, 'dry-run');
   assert.equal(edgeDryRunPayload.debuggerUrl, 'http://127.0.0.1:9333');
+  assert.equal(edgeDryRunPayload.launchMethod, 'Windows-Start-Process-Normal');
+  assert.equal(edgeDryRunPayload.requireNativeWindowVisibility, true);
+  assert.equal(edgeDryRunPayload.localRelayPanelAllowed, false);
 
   const listResult = runRaw('select_databases.mjs', ['--list']);
   assert.equal(listResult.status, 0, 'database menu must render without side effects');
