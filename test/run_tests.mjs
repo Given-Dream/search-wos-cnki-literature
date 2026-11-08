@@ -387,7 +387,30 @@ try {
   const wosBuffer = await fs.readFile(path.join(outputDir, 'TOPIC_A_WOS.txt'));
   assert.deepEqual([...wosBuffer.subarray(0, 3)], [0xEF, 0xBB, 0xBF], 'TXT must include UTF-8 BOM');
 
-  console.log('PASS: confirmation menu, Boolean-first numbering, mandatory database-specific Boolean queries, keyword-batch isolation, 22-source catalog, HTTP allowlist, external Edge/CDP routing, CQVIP restriction diagnosis, query targets, viewport CAPTCHA detection, semantic group mapping, generic extraction, selection, year exception, publication gates, independent quotas, GB/T year, and BOM');
+  const allConfig = JSON.parse(await fs.readFile(path.join(testDir, 'config.json'), 'utf8'));
+  allConfig.selection.maxPerDatabaseGroup = 'all';
+  const allConfigPath = path.join(temporaryRoot, 'all-config.json');
+  const allOutputDir = path.join(temporaryRoot, 'all-output');
+  await fs.writeFile(allConfigPath, JSON.stringify(allConfig), 'utf8');
+  run('select_and_export.mjs', ['--config', allConfigPath, '--output', allOutputDir, '--input', inputPath]);
+  run('validate_outputs.mjs', ['--config', allConfigPath, '--input', allOutputDir]);
+
+  const allReport = JSON.parse(await fs.readFile(path.join(allOutputDir, 'selection-report.json'), 'utf8'));
+  assert.equal(allReport.policy.maxPerPool, 'all');
+  const allWos = allReport.pools.find((pool) => pool.group === 'TOPIC_A' && pool.database === 'WOS');
+  const expectedDois = new Set([...generatedRecentWos.map((record) => record.doi), '10.5555/wos.old.high']);
+  assert.deepEqual(new Set(allWos.selected.map((record) => record.doi)), expectedDois, 'all mode must retain every eligible WOS record');
+
+  const allWosPath = path.join(allOutputDir, 'TOPIC_A_WOS.txt');
+  const allWosText = await fs.readFile(allWosPath, 'utf8');
+  const lastRecord = allWosText.lastIndexOf(`\n[${expectedDois.size}]\n`);
+  assert.ok(lastRecord > 0, 'all-mode export must contain the last eligible record');
+  await fs.writeFile(allWosPath, allWosText.slice(0, lastRecord + 1), 'utf8');
+  const incompleteAll = runRaw('validate_outputs.mjs', ['--config', allConfigPath, '--input', allOutputDir]);
+  assert.notEqual(incompleteAll.status, 0, 'all-mode validation must detect a missing eligible record');
+  assert.match(incompleteAll.stdout, /expected 12 eligible records, found 11/);
+
+  console.log('PASS: confirmation menu, Boolean-first numbering, mandatory database-specific Boolean queries, keyword-batch isolation, 22-source catalog, HTTP allowlist, external Edge/CDP routing, CQVIP restriction diagnosis, query targets, viewport CAPTCHA detection, semantic group mapping, generic extraction, selection, year exception, publication gates, independent quotas, all retention, GB/T year, and BOM');
 } finally {
   const resolvedTemporaryRoot = path.resolve(temporaryRoot);
   if (!resolvedTemporaryRoot.startsWith(path.resolve(os.tmpdir()))) {

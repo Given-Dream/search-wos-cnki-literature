@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs, requireArgs } from './lib/cli.mjs';
-import { isPlausibleDoi, resolveCurrentYear, safeFileComponent } from './lib/screening.mjs';
+import { isPlausibleDoi, resolveCurrentYear, resolveRetentionLimit, safeFileComponent } from './lib/screening.mjs';
 
 function parseBlocks(text) {
   return text
@@ -26,7 +26,7 @@ const config = JSON.parse(await fs.readFile(String(args.config), 'utf8'));
 const selection = config.selection ?? config;
 const currentYear = resolveCurrentYear(selection);
 const recentStart = currentYear - Number(selection.recentYearSpan ?? 3) + 1;
-const maxCount = Number(selection.maxPerDatabaseGroup ?? 10);
+const maxCount = resolveRetentionLimit(selection);
 const inputDir = path.resolve(String(args.input));
 const results = [];
 const errors = [];
@@ -35,6 +35,10 @@ try {
   selectionReport = JSON.parse(await fs.readFile(path.join(inputDir, 'selection-report.json'), 'utf8'));
 } catch (error) {
   errors.push(`selection-report.json: missing or invalid (${error.code ?? error.message})`);
+}
+const reportedPools = Array.isArray(selectionReport?.pools) ? selectionReport.pools : [];
+if (maxCount === 'all' && selectionReport && selectionReport.policy?.maxPerPool !== 'all') {
+  errors.push('selection-report.json: expected retention mode "all"');
 }
 const configuredGroups = selection.groups;
 const groups = Array.isArray(configuredGroups) && configuredGroups.length
@@ -63,7 +67,16 @@ for (const group of groups) {
     const hasBom = buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF;
     if (!hasBom) errors.push(`${filename}: missing UTF-8 BOM`);
     const blocks = parseBlocks(buffer.toString('utf8'));
-    if (blocks.length > maxCount) errors.push(`${filename}: ${blocks.length} records exceeds ${maxCount}`);
+    if (maxCount === 'all') {
+      const pool = reportedPools.find((item) => item.group === group && item.database === database);
+      if (!pool) {
+        errors.push(`${filename}: missing pool in selection-report.json`);
+      } else if (blocks.length !== pool.timeEligibleCount) {
+        errors.push(`${filename}: expected ${pool.timeEligibleCount} eligible records, found ${blocks.length}`);
+      }
+    } else if (blocks.length > maxCount) {
+      errors.push(`${filename}: ${blocks.length} records exceeds ${maxCount}`);
+    }
     const seen = new Set();
     for (let index = 0; index < blocks.length; index += 1) {
       const fields = blocks[index];

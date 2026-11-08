@@ -8,7 +8,7 @@ Use Playwright over Edge's Chrome DevTools Protocol (CDP). Do not use computer-u
 
 The scripts try `PLAYWRIGHT_MODULE_URL`, the normal `playwright` package, and then the bundled Windows Codex runtime path. Set `PLAYWRIGHT_MODULE_URL` when Playwright lives elsewhere.
 
-Create a confirmed database selection plan before starting a persistent session. Never navigate to WOS, CNKI, or another database before the user answers the required first-turn question.
+For a topical search, complete the semantic group plan, confirm the retention choice, and record the queries or keyword batches before starting a persistent session. Start with a confirmed database selection plan, using any explicit choice already given for this search. For a landing-page access check, use the requested targets without drafting topical groups.
 
 ## Mandatory normal Edge desktop window
 

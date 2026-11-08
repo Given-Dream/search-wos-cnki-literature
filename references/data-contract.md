@@ -62,6 +62,8 @@ With `selection.groups: "auto"`, the exporter derives groups from candidate reco
 
 ## Selector input and output
 
+Set `selection.maxPerDatabaseGroup` in the run config to the confirmed positive integer or `"all"`. The selection report records the value in `policy.maxPerPool`. For `"all"`, every group/database file must contain `timeEligibleCount` records after screening and DOI deduplication. Record collection gaps separately because the count is based on collected candidates.
+
 ```powershell
 node scripts/select_and_export.mjs --config run/config.json --output run/final --input run/candidates/GROUP_A_WOS.annotated.json --input run/candidates/GROUP_A_CNKI.annotated.json
 ```

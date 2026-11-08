@@ -40,6 +40,16 @@ export function resolveCurrentYear(selection) {
   return parsed;
 }
 
+export function resolveRetentionLimit(selection) {
+  const value = selection.maxPerDatabaseGroup ?? 10;
+  if (value === 'all') return value;
+  const limit = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new Error('selection.maxPerDatabaseGroup must be a positive integer or "all".');
+  }
+  return limit;
+}
+
 function extractGbTYear(citation) {
   const match = line(citation).match(/\[J\][\s\S]*?[,，]\s*((?:19|20)\d{2})\s*[,，]/i);
   return Number(match?.[1] ?? 0) || 0;
@@ -196,7 +206,7 @@ export function selectAll(rawRecords, config) {
   const currentYear = resolveCurrentYear(selection);
   const recentYearSpan = Math.max(1, number(selection.recentYearSpan, 3));
   const recentStart = currentYear - recentYearSpan + 1;
-  const maxPerPool = Math.max(1, number(selection.maxPerDatabaseGroup, 10));
+  const maxPerPool = resolveRetentionLimit(selection);
   const topFraction = Math.min(1, Math.max(0.001, number(selection.olderExceptionTopFraction, 0.1)));
   const normalized = rawRecords.map((record, index) => normalizeRecord(record, selection, index));
   const configuredGroups = selection.groups;
@@ -234,8 +244,9 @@ export function selectAll(rawRecords, config) {
         timeEligible.push(annotated);
       }
       const ranked = timeEligible.sort(compareCandidates);
-      const selected = ranked.slice(0, maxPerPool).map((record, index) => ({ ...record, selectionRank: index + 1 }));
-      for (const record of ranked.slice(maxPerPool)) {
+      const keepCount = maxPerPool === 'all' ? ranked.length : maxPerPool;
+      const selected = ranked.slice(0, keepCount).map((record, index) => ({ ...record, selectionRank: index + 1 }));
+      for (const record of ranked.slice(selected.length)) {
         exclusions.push({ doi: record.doi, title: record.title, reason: 'ranked-below-journal-cutoff' });
       }
       pools.push({
@@ -305,7 +316,9 @@ export function renderSummary(report) {
     '',
     `执行年份: ${report.policy.currentYear}`,
     `近三年窗口: ${report.policy.recentStart}–${report.policy.currentYear}`,
-    `每库每组上限: ${report.policy.maxPerPool}`,
+    report.policy.maxPerPool === 'all'
+      ? '每库每组保留全部符合纳入条件的记录'
+      : `每库每组最多保留 ${report.policy.maxPerPool} 篇`,
     `最低相关性分数: ${report.policy.minimumRelevanceScore}`,
     `旧文高影响例外比例: 前 ${(report.policy.olderExceptionTopFraction * 100).toFixed(0)}%（同库同组候选池）`,
     '',

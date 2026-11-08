@@ -2,15 +2,15 @@
 
 ## Required confirmation gate
 
-When the Skill is invoked, first display the exact question `是否使用默认的 WOS + 知网完整采集？` together with the grouped, numbered catalog from `node scripts/select_databases.mjs --list`. The Boolean-capable group is numbered first; the keyword-batch group follows it. Stop and wait for the user's answer. Do not parse a strategy, start Edge, navigate to a database, or collect records before that answer.
+For a topical search, draft or recover the semantic groups before retrieval. When the user has already named the databases or selected catalog numbers for this search, use that choice. Otherwise show the draft with the exact question `是否使用默认的 WOS + 知网完整采集？` and the complete menu from `node scripts/select_databases.mjs --list`. The Boolean-capable group comes first, followed by the keyword-batch group. Wait for an explicit choice before creating a selection plan, translating or submitting queries, starting Edge, or collecting records.
 
 - If the user explicitly agrees, create a default plan with `--default`. Only then run the complete WOS and CNKI collectors.
-- Otherwise, require one or more catalog numbers. Accept comma-separated numbers and ascending ranges. Create a custom plan with `--selection`; do not silently add WOS or CNKI.
+- For a custom choice, map unambiguous database names to their catalog numbers and accept comma-separated numbers or ascending ranges. Create a custom plan with `--selection` for exactly those databases.
 - If the reply is ambiguous, ask for either an explicit confirmation or database numbers. Do not infer consent from the fact that WOS and CNKI are defaults.
 
 ## Commands
 
-Display the required first-turn prompt and numbered catalog:
+Display the prompt and numbered catalog when a database choice is needed.
 
 ```powershell
 node scripts/select_databases.mjs --list

@@ -1,12 +1,12 @@
 # search-wos-cnki-literature
 
-一个通用 Codex Skill：先向用户确认是否使用默认的 WOS + 知网完整采集，并同时显示分组编号库清单；得到明确答复后，通过 Playwright/CDP 控制 Microsoft Edge，在已确认的数据库中执行可追踪检索。支持布尔构造的网站排在前面，并强制使用各库专用布尔表达式；当前未确认布尔语法的网站排在后面，采用关键词或字段分批检索并合并去重。仅当用户明确同意默认方案或按编号选择 WOS/知网时，才启用其完整采集、筛选与 TXT 导出。
+这是一个可从研究主题直接启动的 Codex Skill。它先划分语义群，再为用户选定的数据库生成检索式或关键词批次，并通过可见的 Microsoft Edge 会话执行可追踪的检索。WOS 和知网支持分组采集、筛选及 TXT 导出。
 
-核心原则是：检索主题和分组来自用户提供的策略文件，Skill 本身不绑定具体学科，也不限定 Q1–Q4。
+用户也可以直接提供语义群或检索策略。语义群的数量和内容由研究范围决定。
 
 ## 功能
 
-- 首次调用只显示“是否使用默认的 WOS + 知网完整采集？”和完整编号清单，随后等待用户；未获明确同意或编号前不启动检索。
+- 根据主题生成语义群及筛选边界，保存为 `semantic-groups.md`。需要选库时，随分组草案展示“是否使用默认的 WOS + 知网完整采集？”和完整编号清单。
 - 以 `0` 表示默认 WOS + 知网，或按编号、逗号和升序范围选择一个或多个库；自定义选择不会自动补入 WOS/知网。
 - 收录武汉文献情报中心“全文库”21 个入口，并额外保留 WOS，共 22 个稳定编号。
 - 编号先列“可构建布尔高级检索式”库，再列“不构建布尔表达式”库；目录校验会拒绝两组交错。
@@ -79,9 +79,13 @@ gh repo clone Given-Dream/search-wos-cnki-literature C:\Users\<用户名>\.codex
 node test\run_tests.mjs
 ```
 
-### 2. 确认数据库（强制前置）
+### 2. 划分语义群并确认数据库与保留方式
 
-首次调用先显示问题和编号清单，并等待用户：
+给出主题后，先整理各组的研究问题、必需概念、同义词和纳入边界。已有分组或检索策略时，沿用原分组和范围。分组方法见 [query-workflow.md](references/query-workflow.md)，从主题开始的示例见 [request.md](examples/request.md)。
+
+数据库尚未明确时，将分组草案和选库问题、编号清单一并展示，等用户选择。已经明确指定的数据库可直接生成选择计划。
+
+随分组草案询问「本次每库每组最多保留多少篇，还是全部保留符合纳入条件的文献？」将用户确认的篇数或 `"all"` 写入本次运行的 `selection.maxPerDatabaseGroup`。全部保留仍按本次确认的相关性、年份、文献类型和字段条件筛选。
 
 ```powershell
 node scripts\select_databases.mjs --list
@@ -113,7 +117,7 @@ node scripts\select_databases.mjs --selection 21 --keyword-query "rock mechanics
 
 带查询的计划只能选择一个库。多库计划先不带查询创建，再为每个库分别生成并记录检索式或关键词批次。
 
-在收到明确答复前，不得解析或执行检索策略、启动 Edge 或访问数据库。
+先完成分组、选库、保留方式确认和检索式记录，再启动 Edge 执行检索。
 
 ### 两套检索逻辑
 
@@ -123,7 +127,7 @@ node scripts\select_databases.mjs --selection 21 --keyword-query "rock mechanics
 
 ### 3. 准备 WOS/知网检索策略
 
-策略文件使用数据库标题、分组标题和代码块：
+按语义群逐组写入选定数据库的检索式。策略文件沿用语义群的 ID，使用数据库标题、分组标题和代码块。
 
 ````markdown
 # Web of Science
@@ -291,7 +295,7 @@ node scripts\validate_outputs.mjs `
 
 ## 默认筛选规则
 
-- 每个分组的 WOS 与 CNKI 分别取数，每库每组最多 10 篇。
+- 每库每组独立筛选。按用户给出的篇数设上限，或保留全部符合纳入条件的记录。
 - 默认最低相关性分数为 `0.8`。
 - 优先选择执行年份及此前两年，即滚动近三年。
 - 旧文必须进入同库同组候选池指标前 10%：WOS 使用引用量；CNKI 使用引用量或下载量。
@@ -330,7 +334,7 @@ DOI: ...
 
 ## 示例
 
-[`examples/request.md`](examples/request.md)、[`examples/commands.ps1`](examples/commands.ps1) 和 [`examples/candidates.sample.json`](examples/candidates.sample.json) 均使用领域无关的占位概念。
+[`examples/request.md`](examples/request.md) 展示如何从主题划分语义群以及如何执行已有策略。[`examples/commands.ps1`](examples/commands.ps1) 展示从确认选库、提取策略到分组采集的命令顺序。
 
 ## 验证状态
 

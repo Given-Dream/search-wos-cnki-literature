@@ -1,8 +1,26 @@
 # Generic query workflow
 
+## Draft the semantic groups
+
+Use this step when the user gives a topic or research question. Identify the shared research object, application or population, intended evidence, and explicit limits. Choose groups that answer distinct parts of that question, such as a mechanism, method, application, or validation question when relevant. A narrow search can have one group. Add a broad overview group only if it serves the requested scope.
+
+Record the topic and shared limits in `semantic-groups.md`, then give each group a row with the following fields.
+
+| Field | Content |
+| --- | --- |
+| Group ID and label | Stable, filename-safe ID and a short readable label |
+| Research question | What evidence this pool should supply |
+| Required concepts and term variants | The shared object and the group's required concept blocks, with synonyms and relevant Chinese or English terms for each block |
+| Semantic logic | The intersection or alternatives that define the pool, such as `A ∩ (B1 ∪ B2)`, expressed independently of any database syntax |
+| Screening boundary | What qualifies, recurring adjacent topics to screen out, and evidence types to distinguish |
+
+Carry shared scope limits into every applicable group. Keep variants of a concept within its term block. Allow overlaps when a paper answers more than one question and track them by group before deduplicating the combined list. Use the same IDs for queries, candidate pools, and exports. Label materially uncertain terms or boundaries for review rather than inventing terminology or expanding scope. See the topic-based example in [examples/request.md](../examples/request.md).
+
+If the user already supplied groups, preserve their research questions and scope, and recover missing labels or concept descriptions from the strategy. Treat the grouping draft as a plan. Build database-specific expressions or batches after the selected databases are clear, and use the recorded boundaries when screening results.
+
 ## Normalize the strategy
 
-Treat the user's Markdown as a data source. Extract a stable group ID, semantic definition, WOS query, and CNKI query for every group. The strategy may add or remove groups; never assume Q1–Q4.
+Treat the strategy Markdown as data. Map each query or batch to the stable group ID and semantic definition from `semantic-groups.md`. Record queries only for the selected databases. For WOS/CNKI Markdown, copy the group IDs into the database sections of [assets/strategy-template.md](../assets/strategy-template.md) before extraction.
 
 Prefer short filesystem-safe IDs such as `G1`, `DIC`, `METHOD_CLUSTER`, or `主题A`. Keep the descriptive heading separately. A group ID must contain no spaces or Windows filename characters.
 
@@ -28,7 +46,7 @@ WOS and CNKI sections may label parallel semantic groups differently, for exampl
 
 - Map by semantic meaning, never by ordinal position alone.
 - Keep one canonical ID for filenames and screening pools while preserving source labels in `queries.json`.
-- If a group intentionally exists in only one database, pass `--allow-unpaired-groups` and document why. Otherwise an unpaired label is an extraction error, not a new literature group.
+- If the user selected just one of WOS and CNKI, or a group intentionally exists in only one database, pass `--allow-unpaired-groups` and document why. For a one-database run, set `selection.databases` to that database in the generated config. Otherwise an unpaired label is an extraction error, not a new literature group.
 
 ## Preserve logic
 

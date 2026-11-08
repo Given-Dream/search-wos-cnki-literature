@@ -2,9 +2,9 @@
 
 ## Unit of selection
 
-Select independently for every `(group, database)` pair defined by the strategy. Each WOS pool and its corresponding CNKI pool may independently contain up to the configured maximum; never impose a fixed cross-database split. The same paper may appear in different semantic groups, but DOI duplicates within one output file are forbidden.
+Confirm the retention choice with the user before searching. For `selection.maxPerDatabaseGroup`, use the user's positive integer limit or `"all"`. Apply it independently to each `(group, database)` pair. In all mode, retain every unique collected record that passes the agreed screening criteria. Year, publication type, relevance, and required fields come from the agreed screening scope in both modes.
 
-The maximum is a ceiling, not a target. A sparse pool may produce fewer records or an empty TXT. Never import adjacent papers from another group or database to fill it.
+A numeric limit is an upper bound. A sparse pool may produce fewer records or an empty TXT. The same paper may belong to several groups, with one copy per output file.
 
 ## Relevance gate
 
